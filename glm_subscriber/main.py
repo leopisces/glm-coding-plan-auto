@@ -331,7 +331,6 @@ def _worker(instance_id: str, args_ns) -> None:
             return
 
         cycle = 0
-        last_target_text = ""
         while True:
             cycle += 1
             if not infinite and cycle > max_retries:
@@ -389,19 +388,9 @@ def _worker(instance_id: str, args_ns) -> None:
             except Exception:
                 pass
 
-            if last_target_text:
-                from glm_subscriber.captcha_solver import extract_targets_from_dom, refresh_captcha
-                current_targets = extract_targets_from_dom(page)
-                current_target_text = "".join(current_targets)
-                if current_target_text and current_target_text == last_target_text:
-                    logger.warning(f"Stale CAPTCHA detected (same targets: {current_targets}), refreshing...")
-                    refresh_captcha(page)
-                    time.sleep(2)
-
             result = solver.solve(page)
 
             if result.success:
-                last_target_text = result.target_text
                 logger.success(f"CAPTCHA solved! Clicked: {result.clicked_positions}")
 
                 time.sleep(1)

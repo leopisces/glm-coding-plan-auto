@@ -304,6 +304,21 @@ class CaptchaSolver:
         for ocr_round in range(max_ocr_rounds):
             logger.debug(f"OCR round {ocr_round + 1}/{max_ocr_rounds}")
 
+            # Wait for image area first — otherwise the DOM header may still
+            # contain stale target text from a previous CAPTCHA cycle.
+            try:
+                page.wait_for_selector(image_area_selector, timeout=5000, state="visible")
+                time.sleep(0.5)
+            except Exception as e:
+                if ocr_round < max_ocr_rounds - 1:
+                    logger.warning(f"Image area not visible on round {ocr_round + 1}, refreshing...")
+                    refresh_captcha(page)
+                    time.sleep(2)
+                    continue
+                return SolverResult(success=False, target_text="", clicked_positions=[],
+                                    detections=[], targets_found=0, targets_requested=0,
+                                    error=f"image_area_not_visible: {str(e)}", retry_allowed=True)
+
             # Step 1: Extract target characters from DOM
             target_chars = extract_targets_from_dom(page)
             if not target_chars:
@@ -324,8 +339,6 @@ class CaptchaSolver:
 
             # Step 2: Screenshot image area
             try:
-                page.wait_for_selector(image_area_selector, timeout=5000, state="visible")
-                time.sleep(0.5)
                 captcha_image = self.captcha_capture.capture_element(page, image_area_selector)
             except Exception as e:
                 logger.error(f"Failed to capture image area: {e}")
