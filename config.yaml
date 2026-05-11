@@ -1,0 +1,84 @@
+# GLM Auto-Subscribe Tool Configuration
+
+# Browser connection
+browser:
+  mode: "persistent"  # "cdp" (connect to running Chrome) or "persistent" (launch own Chrome)
+  url: "https://www.bigmodel.cn/glm-coding?ic=QJ8SDUDGOX"  # 目标页面，启动后自动导航
+  cdp_port: 9222
+  cdp_host: localhost
+  user_data_dir: ".browser-data"  # persistent mode only: profile directory for login persistence
+  headless: false
+
+# CAPTCHA element selectors (from live DOM analysis)
+# CAPTCHA type: Tencent sliding puzzle (tencent-captcha-dy), NOT click-text
+selectors:
+  plan: "Lite"  # Lite / Pro / Max
+  subscribe_buttons:
+    Lite: ".package-card:nth-of-type(1) button.buy-btn"
+    Pro: ".package-card:nth-of-type(2) button.buy-btn"
+    Max: ".package-card:nth-of-type(3) button.buy-btn"
+  captcha_container: "#tcaptcha_transform_dy"  # Tencent CAPTCHA container
+  captcha_slider: ".tencent-captcha-dy__slider-block"  # Slider handle
+  captcha_confirm: ".tencent-captcha-dy__verify-confirm-btn"  # Confirm button
+  target_text: ""  # N/A for slider CAPTCHA
+  click_option: ""  # N/A for slider CAPTCHA
+  confirm_button: ".tencent-captcha-dy__verify-confirm-btn"  # Same as captcha_confirm
+
+# Timeouts (in seconds)
+timeouts:
+  page_load: 30
+  element_wait: 10
+  ocr_processing: 30
+  click_delay: 0.5
+
+# Retry settings
+retry:
+  max_attempts: -1  # -1 = infinite loop
+  retry_on_same_captcha: true  # Can retry without refreshing CAPTCHA
+  backoff_multiplier: 1.5
+
+# OCR configuration (PaddleOCR 3.5.0 / paddlex API)
+ocr:
+  lang: ch
+  use_textline_orientation: true
+  device: cpu
+  enable_mkldnn: false
+  cpu_threads: 4
+  text_det_thresh: 0.3
+  text_det_box_thresh: 0.5
+  text_det_unclip_ratio: 1.6
+  text_recognition_batch_size: 6
+
+# Confidence thresholds
+confidence:
+  min_detection: 0.7   # Minimum confidence for character detection
+  min_match: 0.8        # Minimum confidence for text matching
+
+# Click settings
+click:
+  offset_x: 0  # Click offset from center
+  offset_y: 0
+  verify_click: true  # Verify click was successful
+
+# Email notification (QQ Mail SMTP)
+notification:
+  enabled: true
+  smtp_host: "smtp.qq.com"
+  smtp_port: 465
+  sender: "190980198@qq.com"
+  password: "pkcvcrvjxbxybieg"
+  receiver: "190980198@qq.com"
+
+# Logging
+log:
+  level: INFO
+  format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+  rotation: 10MB
+  retention: 7 days
+  output: logs/glm_subscriber.log
+
+# Environment variables (override config)
+env:
+  CDP_PORT: 9222
+  CDP_HOST: localhost
+  LOG_LEVEL: INFO

@@ -1,0 +1,8 @@
+debug_output/
+__pycache__/
+*.pyc
+.env
+logs/
+venv/
+*.egg-info/
+.browser-data*

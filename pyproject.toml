@@ -1,0 +1,58 @@
+[project]
+name = "glm-subscriber"
+version = "0.2.0"
+description = "GLM auto-subscribe tool for click-text CAPTCHA solving"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "GLM Team"}
+]
+keywords = ["captcha", "automation", "ocr", "playwright"]
+
+dependencies = [
+    "playwright>=1.40.0",
+    "rapidocr-onnxruntime>=1.3.0",
+    "opencv-python>=4.8.0",
+    "pyyaml>=6.0",
+    "loguru>=0.7.0",
+    "numpy>=1.24.0",
+    "pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-playwright>=0.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+stealth = [
+    "playwright-stealth>=1.0.6",
+]
+
+[project.scripts]
+glm-subscriber = "glm_subscriber.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["glm_subscriber*"]
+
+[tool.setuptools.package-data]
+glm_subscriber = ["../js/*.js"]
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
