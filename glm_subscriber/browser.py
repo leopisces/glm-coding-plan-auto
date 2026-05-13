@@ -325,6 +325,23 @@ def get_first_page(browser) -> Optional[Page]:
         return None
 
 
+class BrowserClosedError(Exception):
+    """Raised when the browser/page/context has been closed."""
+
+
+def is_page_closed(page: Page) -> bool:
+    """Check if the page or its browser context has been closed."""
+    try:
+        if page.is_closed():
+            return True
+        browser = page.context.browser
+        if browser is None or not browser.is_connected():
+            return True
+        return False
+    except Exception:
+        return True
+
+
 _PLAN_INDEX = {"Lite": 0, "Pro": 1, "Max": 2}
 _BILLING_CYCLE_INDEX = {"monthly": 0, "quarterly": 1, "yearly": 2}
 _BILLING_CYCLE_LABEL = {"monthly": "连续包月", "quarterly": "连续包季", "yearly": "连续包年"}
@@ -353,6 +370,8 @@ def select_billing_cycle(page: Page, cycle: str = "") -> bool:
         time.sleep(0.5)
         return True
     except Exception as e:
+        if "closed" in str(e).lower():
+            raise BrowserClosedError(str(e)) from e
         logger.warning(f"Failed to select billing cycle '{cycle}': {e}")
         return False
 
@@ -374,6 +393,8 @@ def click_subscribe_button(page: Page, billing_cycle: str = "") -> bool:
             logger.debug(f"Clicked subscribe button [{plan}] (index={plan_index})")
             return True
         except Exception as e:
+            if "closed" in str(e).lower():
+                raise BrowserClosedError(str(e)) from e
             logger.warning(f"Failed to click subscribe button [{plan}]: {e}")
             return False
 
@@ -387,6 +408,8 @@ def click_subscribe_button(page: Page, billing_cycle: str = "") -> bool:
         logger.debug(f"Clicked subscribe button (fallback): {selector}")
         return True
     except Exception as e:
+        if "closed" in str(e).lower():
+            raise BrowserClosedError(str(e)) from e
         logger.warning(f"Failed to click subscribe button: {e}")
         return False
 
@@ -421,7 +444,9 @@ def wait_for_captcha_popup(page: Page, timeout: int = 10000) -> bool:
             page.wait_for_selector(sel, timeout=timeout, state="visible")
             logger.debug(f"CAPTCHA popup appeared: {sel}")
             return True
-        except Exception:
+        except Exception as e:
+            if "closed" in str(e).lower():
+                raise BrowserClosedError(str(e)) from e
             continue
     
     logger.warning(f"CAPTCHA popup did not appear within {timeout}ms")

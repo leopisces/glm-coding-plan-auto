@@ -12,14 +12,15 @@ from loguru import logger
 
 from glm_subscriber.rapidocr_engine import RapidOCREngine as OCREngine
 from glm_subscriber.browser import (
-    connect_browser,
-    launch_persistent_context,
-    get_first_page,
+    BrowserClosedError,
+    cleanup,
     click_subscribe_button,
+    connect_browser,
+    get_mode,
+    get_first_page,
+    is_page_closed,
+    launch_persistent_context,
     wait_for_captcha_popup,
-    click_confirm_button,
-    cleanup as cleanup_browser,
-    get_mode as get_browser_mode,
 )
 from glm_subscriber.captcha_capture import CaptchaCapture
 from glm_subscriber.captcha_solver import CaptchaSolver
@@ -263,6 +264,103 @@ def run_offline_test(debug: bool = False) -> None:
     logger.success("Offline test completed successfully!")
 
 
+def _log_stats(stats: dict, instance_id: str = "", final: bool = False) -> None:
+    attempts = stats["captcha_attempts"]
+    solved = stats["captcha_solved"]
+    failed = stats["captcha_failed"]
+    full = stats["ocr_full_match"]
+    partial = stats["ocr_partial_match"]
+    solve_rate = f"{solved / attempts * 100:.1f}%" if attempts else "N/A"
+    ocr_rate = f"{full / attempts * 100:.1f}%" if attempts else "N/A"
+    prefix = f"[{instance_id}]" if instance_id else ""
+    tag = "FINAL STATS" if final else "STATS"
+    logger.info(
+        f"{prefix} {tag} | attempts={attempts} solved={solved} failed={failed} "
+        f"solve_rate={solve_rate} | ocr_full={full} ocr_partial={partial} ocr_rate={ocr_rate}"
+    )
+
+    stats_dir = Path("logs")
+    stats_dir.mkdir(exist_ok=True)
+    stats_file = stats_dir / "stats.txt"
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    inst_key = instance_id or "default"
+
+    import json
+
+    cur = {
+        "attempts": attempts, "solved": solved, "failed": failed,
+        "ocr_full": full, "ocr_partial": partial,
+    }
+
+    try:
+        import msvcrt
+        with open(stats_file, "a+", encoding="utf-8") as f:
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                f.seek(0)
+                entries = {}
+                for line in f.read().splitlines():
+                    line = line.strip()
+                    if line.startswith("#DATA#"):
+                        try:
+                            obj = json.loads(line[6:])
+                            entries[obj["id"]] = obj
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+                cur["id"] = inst_key
+                if stats.get("recent_errors"):
+                    cur["recent_errors"] = stats["recent_errors"][-10:]
+                entries[inst_key] = cur
+
+                all_data = sorted(entries.values(), key=lambda x: x["id"])
+                t_a = sum(d.get("attempts", 0) for d in all_data)
+                t_s = sum(d.get("solved", 0) for d in all_data)
+                t_f = sum(d.get("failed", 0) for d in all_data)
+                t_full = sum(d.get("ocr_full", 0) for d in all_data)
+                t_part = sum(d.get("ocr_partial", 0) for d in all_data)
+                t_solve = f"{t_s / t_a * 100:.1f}%" if t_a else "N/A"
+                t_ocr = f"{t_full / t_a * 100:.1f}%" if t_a else "N/A"
+
+                hdr = f"{'Instance':<10} {'Attempts':>8} {'Solved':>8} {'Failed':>8} {'SolveRate':>10} {'OCR_Full':>9} {'OCR_Partial':>12} {'OCR_Rate':>9}"
+                sep = "-" * len(hdr)
+
+                f.seek(0)
+                f.truncate()
+                for d in all_data:
+                    f.write(f"#DATA#{json.dumps(d, ensure_ascii=False)}\n")
+                f.write(f"\n{'='*len(hdr)}\n")
+                f.write(f"  GLM Coding Plan - CAPTCHA Stats | {ts}\n")
+                f.write(f"{'='*len(hdr)}\n\n")
+                f.write(f"{hdr}\n{sep}\n")
+                for d in all_data:
+                    a = d.get("attempts", 0)
+                    s = d.get("solved", 0)
+                    fa = d.get("failed", 0)
+                    fu = d.get("ocr_full", 0)
+                    pa = d.get("ocr_partial", 0)
+                    sr = f"{s / a * 100:.1f}%" if a else "N/A"
+                    or_ = f"{fu / a * 100:.1f}%" if a else "N/A"
+                    f.write(f"{d['id']:<10} {a:>8} {s:>8} {fa:>8} {sr:>10} {fu:>9} {pa:>12} {or_:>9}\n")
+                f.write(f"{sep}\n")
+                f.write(f"{'TOTAL':<10} {t_a:>8} {t_s:>8} {t_f:>8} {t_solve:>10} {t_full:>9} {t_part:>12} {t_ocr:>9}\n")
+                f.write(f"{sep}\n")
+
+                has_errors = False
+                for d in all_data:
+                    errs = d.get("recent_errors", [])
+                    if errs:
+                        has_errors = True
+                        f.write(f"\n[{d['id']}] Recent errors:\n")
+                        for err in errs[-10:]:
+                            f.write(f"  - {err}\n")
+                if not has_errors:
+                    f.write(f"\n  No errors.\n")
+            finally:
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    except Exception as e:
+        logger.debug(f"Failed to write stats file: {e}")
+
+
 def _worker(instance_id: str, args_ns) -> None:
     os.environ["LOGURU_REMOVE_ALL_HANDLERS"] = "1"
     setup_logging(args_ns.log_level, instance=instance_id)
@@ -334,9 +432,17 @@ def _worker(instance_id: str, args_ns) -> None:
             return
 
         cycle = 0
+        stats = {
+                    "captcha_attempts": 0, "captcha_solved": 0, "captcha_failed": 0,
+                    "ocr_full_match": 0, "ocr_partial_match": 0, "recent_errors": [],
+                }
         while True:
             cycle += 1
             if not infinite and cycle > max_retries:
+                break
+
+            if is_page_closed(page):
+                logger.error("Browser/page has been closed, stopping worker.")
                 break
 
             if infinite:
@@ -358,11 +464,20 @@ def _worker(instance_id: str, args_ns) -> None:
                 break
 
             logger.info("Clicking subscribe button...")
-            billing_cycle = config.get("selectors", {}).get("billing_cycle", "")
-            click_subscribe_button(page, billing_cycle=billing_cycle)
+            try:
+                billing_cycle = config.get("selectors", {}).get("billing_cycle", "")
+                click_subscribe_button(page, billing_cycle=billing_cycle)
+            except BrowserClosedError:
+                logger.error("Browser closed while clicking subscribe button, stopping worker.")
+                break
 
             logger.info("Waiting for CAPTCHA popup...")
-            if not wait_for_captcha_popup(page, timeout=5000):
+            try:
+                captcha_appeared = wait_for_captcha_popup(page, timeout=5000)
+            except BrowserClosedError:
+                logger.error("Browser closed while waiting for CAPTCHA, stopping worker.")
+                break
+            if not captcha_appeared:
                 pay_status = _check_payment_page(page)
                 if pay_status == "valid":
                     logger.success("Payment page with amount detected! Stopping.")
@@ -393,6 +508,21 @@ def _worker(instance_id: str, args_ns) -> None:
                 pass
 
             result = solver.solve(page)
+            stats["captcha_attempts"] += 1
+            if result.success:
+                stats["captcha_solved"] += 1
+            else:
+                stats["captcha_failed"] += 1
+                err_msg = f"cycle={cycle} error={result.error} found={result.targets_found}/{result.targets_requested}"
+                stats["recent_errors"].append(err_msg)
+                if len(stats["recent_errors"]) > 20:
+                    stats["recent_errors"] = stats["recent_errors"][-20:]
+            if result.targets_found == result.targets_requested:
+                stats["ocr_full_match"] += 1
+            elif result.targets_found > 0:
+                stats["ocr_partial_match"] += 1
+
+            _log_stats(stats, effective_instance)
 
             if result.success:
                 logger.success(f"CAPTCHA solved! Clicked: {result.clicked_positions}")
@@ -425,7 +555,7 @@ def _worker(instance_id: str, args_ns) -> None:
             plan = config.get("selectors", {}).get("plan", "")
             logger.success(f"Done - payment page with amount is showing! ({amount})")
             send_notification(config, plan=plan, amount=amount)
-            if get_browser_mode() == "persistent":
+            if get_mode() == "persistent":
                 logger.info("浏览器保持打开，请完成支付后手动关闭")
                 input("按回车键退出...")
         elif pay_status == "empty":
@@ -440,8 +570,10 @@ def _worker(instance_id: str, args_ns) -> None:
     except Exception as e:
         logger.exception(f"Error: {e}")
     finally:
+        if stats["captcha_attempts"] > 0:
+            _log_stats(stats, effective_instance, final=True)
         logger.info("Cleaning up...")
-        cleanup_browser()
+        cleanup()
 
 
 def main() -> None:
