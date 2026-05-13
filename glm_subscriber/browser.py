@@ -326,17 +326,45 @@ def get_first_page(browser) -> Optional[Page]:
 
 
 _PLAN_INDEX = {"Lite": 0, "Pro": 1, "Max": 2}
+_BILLING_CYCLE_INDEX = {"monthly": 0, "quarterly": 1, "yearly": 2}
+_BILLING_CYCLE_LABEL = {"monthly": "连续包月", "quarterly": "连续包季", "yearly": "连续包年"}
 
 
-def click_subscribe_button(page: Page) -> bool:
-    """Click the subscription button based on configured plan.
+def select_billing_cycle(page: Page, cycle: str = "") -> bool:
+    cycle = cycle or "quarterly"
+    cycle_index = _BILLING_CYCLE_INDEX.get(cycle)
+    if cycle_index is None:
+        logger.warning(f"Unknown billing_cycle '{cycle}', valid: {list(_BILLING_CYCLE_INDEX.keys())}")
+        return False
 
-    Uses plan index to select the correct .package-card since each card
-    lives in its own parent container (CSS :nth-child/:last-child don't work).
-    """
+    try:
+        tabs = page.locator(".switch-tab-item")
+        active = page.locator(".switch-tab-item.active")
+        if active.count() > 0:
+            active_text = active.first.inner_text(timeout=3000)
+            expected = _BILLING_CYCLE_LABEL[cycle]
+            if expected in active_text:
+                logger.info(f"Billing cycle already set to '{cycle}' ({expected})")
+                return True
+
+        tab = tabs.nth(cycle_index)
+        tab.click(timeout=5000, force=True)
+        logger.info(f"Selected billing cycle '{cycle}' (index={cycle_index})")
+        time.sleep(0.5)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to select billing cycle '{cycle}': {e}")
+        return False
+
+
+def click_subscribe_button(page: Page, billing_cycle: str = "") -> bool:
     selectors = _get_selectors()
     plan = selectors.get("plan", "")
+    cycle = billing_cycle or selectors.get("billing_cycle", "")
     plan_index = _PLAN_INDEX.get(plan)
+
+    if cycle:
+        select_billing_cycle(page, cycle)
 
     if plan_index is not None:
         try:

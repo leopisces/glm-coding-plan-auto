@@ -280,6 +280,9 @@ def _worker(instance_id: str, args_ns) -> None:
     if args_ns.debug:
         config["debug"] = True
 
+    if args_ns.billing_cycle:
+        config.setdefault("selectors", {})["billing_cycle"] = args_ns.billing_cycle
+
     retry_config = config.get("retry", {})
     confidence_config = config.get("confidence", {})
 
@@ -355,7 +358,8 @@ def _worker(instance_id: str, args_ns) -> None:
                 break
 
             logger.info("Clicking subscribe button...")
-            click_subscribe_button(page)
+            billing_cycle = config.get("selectors", {}).get("billing_cycle", "")
+            click_subscribe_button(page, billing_cycle=billing_cycle)
 
             logger.info("Waiting for CAPTCHA popup...")
             if not wait_for_captcha_popup(page, timeout=5000):
@@ -504,6 +508,13 @@ def main() -> None:
         type=int,
         default=None,
         help="Launch N parallel instances (1..N), each with auto-assigned instance ID",
+    )
+    parser.add_argument(
+        "--billing-cycle",
+        type=str,
+        default=None,
+        choices=["monthly", "quarterly", "yearly"],
+        help="Billing cycle: monthly/quarterly/yearly (default: from config or quarterly)",
     )
 
     args = parser.parse_args()
