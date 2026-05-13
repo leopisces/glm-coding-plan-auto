@@ -28,14 +28,20 @@ from glm_subscriber.notify import send_notification
 from glm_subscriber.types import CaptchaConfig
 
 
+def _base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(".")
+
+
 def setup_logging(log_level: str, instance: str = "") -> None:
     logger.remove()
     tag = f"[{instance}] " if instance else ""
     log_fmt = f"<green>{{time:YYYY-MM-DD HH:mm:ss}}</green> | <level>{{level: <8}}</level> | {tag}<level>{{message}}</level>"
     logger.add(sys.stderr, level=log_level, format=log_fmt)
     if instance:
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
+        log_dir = _base_dir() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         logger.add(
             log_dir / f"glm_subscriber_{instance}.log",
             level=log_level,
@@ -48,11 +54,9 @@ def setup_logging(log_level: str, instance: str = "") -> None:
 def load_config(config_path: str) -> dict:
     path = Path(config_path)
     if not path.is_absolute():
-        if getattr(sys, "frozen", False):
-            exe_dir = Path(sys.executable).parent
-            exe_config = exe_dir / config_path
-            if exe_config.exists():
-                path = exe_config
+        exe_config = _base_dir() / config_path
+        if exe_config.exists():
+            path = exe_config
     if not path.exists():
         logger.warning(f"Config file not found: {config_path}, using defaults")
         return {}
@@ -279,86 +283,91 @@ def _log_stats(stats: dict, instance_id: str = "", final: bool = False) -> None:
         f"solve_rate={solve_rate} | ocr_full={full} ocr_partial={partial} ocr_rate={ocr_rate}"
     )
 
-    stats_dir = Path("logs")
-    stats_dir.mkdir(exist_ok=True)
+    import json
+
+    stats_dir = _base_dir() / "logs"
+    try:
+        stats_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning(f"Failed to create stats dir {stats_dir}: {e}")
+        return
+
     stats_file = stats_dir / "stats.txt"
+    tmp_file = stats_dir / "stats.tmp"
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     inst_key = instance_id or "default"
 
-    import json
-
     cur = {
+        "id": inst_key,
         "attempts": attempts, "solved": solved, "failed": failed,
         "ocr_full": full, "ocr_partial": partial,
     }
+    if stats.get("recent_errors"):
+        cur["recent_errors"] = stats["recent_errors"][-10:]
 
     try:
-        import msvcrt
-        with open(stats_file, "a+", encoding="utf-8") as f:
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                f.seek(0)
-                entries = {}
-                for line in f.read().splitlines():
-                    line = line.strip()
-                    if line.startswith("#DATA#"):
-                        try:
-                            obj = json.loads(line[6:])
-                            entries[obj["id"]] = obj
-                        except (json.JSONDecodeError, KeyError):
-                            pass
-                cur["id"] = inst_key
-                if stats.get("recent_errors"):
-                    cur["recent_errors"] = stats["recent_errors"][-10:]
-                entries[inst_key] = cur
+        entries = {}
+        if stats_file.exists():
+            for line in stats_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("#DATA#"):
+                    try:
+                        obj = json.loads(line[6:])
+                        entries[obj["id"]] = obj
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+        entries[inst_key] = cur
 
-                all_data = sorted(entries.values(), key=lambda x: x["id"])
-                t_a = sum(d.get("attempts", 0) for d in all_data)
-                t_s = sum(d.get("solved", 0) for d in all_data)
-                t_f = sum(d.get("failed", 0) for d in all_data)
-                t_full = sum(d.get("ocr_full", 0) for d in all_data)
-                t_part = sum(d.get("ocr_partial", 0) for d in all_data)
-                t_solve = f"{t_s / t_a * 100:.1f}%" if t_a else "N/A"
-                t_ocr = f"{t_full / t_a * 100:.1f}%" if t_a else "N/A"
+        all_data = sorted(entries.values(), key=lambda x: x["id"])
+        t_a = sum(d.get("attempts", 0) for d in all_data)
+        t_s = sum(d.get("solved", 0) for d in all_data)
+        t_f = sum(d.get("failed", 0) for d in all_data)
+        t_full = sum(d.get("ocr_full", 0) for d in all_data)
+        t_part = sum(d.get("ocr_partial", 0) for d in all_data)
+        t_solve = f"{t_s / t_a * 100:.1f}%" if t_a else "N/A"
+        t_ocr = f"{t_full / t_a * 100:.1f}%" if t_a else "N/A"
 
-                hdr = f"{'Instance':<10} {'Attempts':>8} {'Solved':>8} {'Failed':>8} {'SolveRate':>10} {'OCR_Full':>9} {'OCR_Partial':>12} {'OCR_Rate':>9}"
-                sep = "-" * len(hdr)
+        hdr = f"{'Instance':<10} {'Attempts':>8} {'Solved':>8} {'Failed':>8} {'SolveRate':>10} {'OCR_Full':>9} {'OCR_Partial':>12} {'OCR_Rate':>9}"
+        sep = "-" * len(hdr)
 
-                f.seek(0)
-                f.truncate()
-                for d in all_data:
-                    f.write(f"#DATA#{json.dumps(d, ensure_ascii=False)}\n")
-                f.write(f"\n{'='*len(hdr)}\n")
-                f.write(f"  GLM Coding Plan - CAPTCHA Stats | {ts}\n")
-                f.write(f"{'='*len(hdr)}\n\n")
-                f.write(f"{hdr}\n{sep}\n")
-                for d in all_data:
-                    a = d.get("attempts", 0)
-                    s = d.get("solved", 0)
-                    fa = d.get("failed", 0)
-                    fu = d.get("ocr_full", 0)
-                    pa = d.get("ocr_partial", 0)
-                    sr = f"{s / a * 100:.1f}%" if a else "N/A"
-                    or_ = f"{fu / a * 100:.1f}%" if a else "N/A"
-                    f.write(f"{d['id']:<10} {a:>8} {s:>8} {fa:>8} {sr:>10} {fu:>9} {pa:>12} {or_:>9}\n")
-                f.write(f"{sep}\n")
-                f.write(f"{'TOTAL':<10} {t_a:>8} {t_s:>8} {t_f:>8} {t_solve:>10} {t_full:>9} {t_part:>12} {t_ocr:>9}\n")
-                f.write(f"{sep}\n")
+        lines = []
+        for d in all_data:
+            lines.append(f"#DATA#{json.dumps(d, ensure_ascii=False)}")
+        lines.append("")
+        lines.append("=" * len(hdr))
+        lines.append(f"  GLM Coding Plan - CAPTCHA Stats | {ts}")
+        lines.append("=" * len(hdr))
+        lines.append("")
+        lines.append(hdr)
+        lines.append(sep)
+        for d in all_data:
+            a = d.get("attempts", 0)
+            s = d.get("solved", 0)
+            fa = d.get("failed", 0)
+            fu = d.get("ocr_full", 0)
+            pa = d.get("ocr_partial", 0)
+            sr = f"{s / a * 100:.1f}%" if a else "N/A"
+            or_ = f"{fu / a * 100:.1f}%" if a else "N/A"
+            lines.append(f"{d['id']:<10} {a:>8} {s:>8} {fa:>8} {sr:>10} {fu:>9} {pa:>12} {or_:>9}")
+        lines.append(sep)
+        lines.append(f"{'TOTAL':<10} {t_a:>8} {t_s:>8} {t_f:>8} {t_solve:>10} {t_full:>9} {t_part:>12} {t_ocr:>9}")
+        lines.append(sep)
 
-                has_errors = False
-                for d in all_data:
-                    errs = d.get("recent_errors", [])
-                    if errs:
-                        has_errors = True
-                        f.write(f"\n[{d['id']}] Recent errors:\n")
-                        for err in errs[-10:]:
-                            f.write(f"  - {err}\n")
-                if not has_errors:
-                    f.write(f"\n  No errors.\n")
-            finally:
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        has_errors = False
+        for d in all_data:
+            errs = d.get("recent_errors", [])
+            if errs:
+                has_errors = True
+                lines.append(f"\n[{d['id']}] Recent errors:")
+                for err in errs[-10:]:
+                    lines.append(f"  - {err}")
+        if not has_errors:
+            lines.append("\n  No errors.")
+
+        tmp_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp_file.replace(stats_file)
     except Exception as e:
-        logger.debug(f"Failed to write stats file: {e}")
+        logger.warning(f"Failed to write stats file: {e}")
 
 
 def _worker(instance_id: str, args_ns) -> None:
