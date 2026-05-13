@@ -6,3 +6,10 @@ logs/
 venv/
 *.egg-info/
 .browser-data*
+.pytest_cache
+.sisyphus
+build
+debug_output
+dist
+docs
+AGENTS.md
