@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import sys
 import time
+from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 
 import yaml
@@ -370,6 +371,43 @@ def _log_stats(stats: dict, instance_id: str = "", final: bool = False) -> None:
         logger.warning(f"Failed to write stats file: {e}")
 
 
+def _wait_until_start_time(config: dict, args_ns) -> None:
+    schedule_cfg = config.get("schedule", {})
+    start_time_str = args_ns.start_time if args_ns.start_time else schedule_cfg.get("start_time", "")
+    if not start_time_str:
+        return
+
+    try:
+        target = datetime.strptime(start_time_str, "%H:%M:%S").time()
+    except ValueError:
+        try:
+            target = datetime.strptime(start_time_str, "%H:%M").time()
+        except ValueError:
+            logger.error(f"Invalid start_time format: '{start_time_str}', expected HH:MM:SS or HH:MM")
+            return
+
+    now = datetime.now()
+    target_dt = datetime.combine(now.date(), target)
+    if target_dt <= now:
+        target_dt = datetime.combine(now.date() + timedelta(days=1), target)
+
+    remaining = (target_dt - now).total_seconds()
+    logger.info(f"定时模式：目标时间 {start_time_str}，等待 {remaining:.0f} 秒后开始点击")
+    _interruptible_sleep(remaining)
+    logger.success(f"到达定时 {start_time_str}，开始点击！")
+
+
+def _interruptible_sleep(seconds: float, check_interval: float = 1.0) -> None:
+    elapsed = 0.0
+    while elapsed < seconds:
+        sleep_dur = min(check_interval, seconds - elapsed)
+        time.sleep(sleep_dur)
+        elapsed += sleep_dur
+        if elapsed < seconds and int(elapsed) % 30 == 0 and int(elapsed) > 0:
+            remaining = seconds - elapsed
+            logger.info(f"定时等待中... 剩余 {remaining:.0f} 秒")
+
+
 def _worker(instance_id: str, args_ns) -> None:
     os.environ["LOGURU_REMOVE_ALL_HANDLERS"] = "1"
     setup_logging(args_ns.log_level, instance=instance_id)
@@ -439,6 +477,8 @@ def _worker(instance_id: str, args_ns) -> None:
         if page is None:
             logger.error("Failed to get page from browser")
             return
+
+        _wait_until_start_time(config, args_ns)
 
         cycle = 0
         stats = {
@@ -656,6 +696,12 @@ def main() -> None:
         default=None,
         choices=["monthly", "quarterly", "yearly"],
         help="Billing cycle: monthly/quarterly/yearly (default: from config or quarterly)",
+    )
+    parser.add_argument(
+        "--start-time",
+        type=str,
+        default=None,
+        help="Scheduled click time in HH:MM:SS format (overrides config schedule.start_time)",
     )
 
     args = parser.parse_args()
