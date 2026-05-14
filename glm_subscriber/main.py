@@ -373,6 +373,10 @@ def _log_stats(stats: dict, instance_id: str = "", final: bool = False) -> None:
 
 def _wait_until_start_time(config: dict, args_ns) -> None:
     schedule_cfg = config.get("schedule", {})
+    enabled = schedule_cfg.get("enabled", True)
+    if not enabled:
+        logger.info("定时模式已禁用 (schedule.enabled=false)，立即开始")
+        return
     start_time_str = args_ns.start_time if args_ns.start_time else schedule_cfg.get("start_time", "")
     if not start_time_str:
         return
