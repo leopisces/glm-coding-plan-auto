@@ -143,18 +143,17 @@ def _is_click_text_captcha(page: Page) -> bool:
 
 
 def _is_sliding_captcha(page: Page) -> bool:
-    """Detect if current CAPTCHA is sliding puzzle type (not click-text)."""
+    """Detect if current CAPTCHA is sliding puzzle type (not click-text).
+    
+    Sliding CAPTCHA always has a slider block element.
+    Do NOT use container-visible-without-click-text as a fallback —
+    the click-text DOM may not have rendered yet, causing false positives
+    that skip every CAPTCHA and create an infinite loop.
+    """
     try:
-        # Sliding CAPTCHA has a slider block element
         slider = page.locator(".tencent-captcha-dy__slider-block")
-        if slider.count() > 0:
+        if slider.count() > 0 and slider.first.is_visible():
             return True
-        # Also check: CAPTCHA container visible but NO click-text elements
-        container = page.locator("#tcaptcha_transform_dy")
-        if container.count() > 0 and container.first.is_visible():
-            if not _is_click_text_captcha(page):
-                # Container visible but no click-text markers → likely sliding
-                return True
     except Exception:
         pass
     return False
