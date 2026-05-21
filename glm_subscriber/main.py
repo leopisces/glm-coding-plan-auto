@@ -457,6 +457,11 @@ def _worker(instance_id: str, args_ns) -> None:
 
     effective_instance = args_ns.instance or instance_id
 
+    stats = {
+        "captcha_attempts": 0, "captcha_solved": 0, "captcha_failed": 0,
+        "ocr_full_match": 0, "ocr_partial_match": 0, "recent_errors": [],
+    }
+
     try:
         browser_config = config.get("browser", {})
         browser_mode = args_ns.browser_mode or browser_config.get("mode", "cdp")
@@ -485,10 +490,6 @@ def _worker(instance_id: str, args_ns) -> None:
         _wait_until_start_time(config, args_ns)
 
         cycle = 0
-        stats = {
-                    "captcha_attempts": 0, "captcha_solved": 0, "captcha_failed": 0,
-                    "ocr_full_match": 0, "ocr_partial_match": 0, "recent_errors": [],
-                }
         while True:
             cycle += 1
             if not infinite and cycle > max_retries:

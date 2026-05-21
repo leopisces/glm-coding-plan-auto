@@ -159,7 +159,11 @@ class RapidOCREngine:
         if unclip_ratio is not None:
             kwargs["unclip_ratio"] = unclip_ratio
 
-        result = self._ocr(image, **kwargs)
+        try:
+            result = self._ocr(image, **kwargs)
+        except Exception as e:
+            logger.warning(f"OCR inference failed (likely OOM): {e}")
+            return []
 
         # rapidocr_onnxruntime returns (result_list, elapse_list)
         # result_list: [[box, text, score, word_boxes], ...] or None
