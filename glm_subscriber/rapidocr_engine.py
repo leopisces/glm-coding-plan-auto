@@ -12,7 +12,7 @@ from typing import List, Optional
 import cv2
 import numpy as np
 from loguru import logger
-from rapidocr import RapidOCR
+from rapidocr_onnxruntime import RapidOCR
 
 from glm_subscriber.types import BoundingBox, CharDetection
 
@@ -39,7 +39,7 @@ class RapidOCREngine:
         model_type = config.get("model_type", "server")  # server > mobile for accuracy
 
         if ocr_version == "v5":
-            from rapidocr import OCRVersion
+            from rapidocr_onnxruntime import OCRVersion
             params["Det.ocr_version"] = OCRVersion.PPOCRV5
             params["Rec.ocr_version"] = OCRVersion.PPOCRV5
             params["Cls.ocr_version"] = OCRVersion.PPOCRV5
@@ -161,22 +161,38 @@ class RapidOCREngine:
 
         result = self._ocr(image, **kwargs)
 
-        if not result or not result.txts:
+        # rapidocr_onnxruntime returns (result_list, elapse_list)
+        # result_list: [[box, text, score, word_boxes], ...] or None
+        # word_boxes: [[char_box, ...], ...] when return_single_char_box=True
+        if not result or not result[0]:
             return []
 
+        result_list = result[0]
         detections = []
 
-        # Process single-character results if available
-        if hasattr(result, 'word_results') and result.word_results:
-            for line_words in result.word_results:
-                for char_text, conf, box in line_words:
-                    char_text = char_text.strip()
-                    if not char_text:
+        for item in result_list:
+            box = item[0]   # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            text = item[1]  # recognized text string
+            score = item[2] # confidence float
+
+            text = text.strip()
+            if not text:
+                continue
+
+            # Check for single-character boxes (item[3] if present)
+            word_boxes = item[3] if len(item) > 3 else None
+
+            if word_boxes and len(word_boxes) > 0 and text:
+                # Use individual character bounding boxes
+                # word_boxes format: [[char_box], [char_box], ...]
+                # where char_box = [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                for ci, char_box in enumerate(word_boxes):
+                    char_text = text[ci] if ci < len(text) else ""
+                    if not char_text.strip():
                         continue
 
-                    # box format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-                    xs = [p[0] * scale_x for p in box]
-                    ys = [p[1] * scale_y for p in box]
+                    xs = [p[0] * scale_x for p in char_box]
+                    ys = [p[1] * scale_y for p in char_box]
 
                     bbox = BoundingBox(
                         x1=int(min(xs)),
@@ -188,20 +204,13 @@ class RapidOCREngine:
 
                     det = CharDetection(
                         text=char_text,
-                        confidence=float(conf),
+                        confidence=float(score),
                         bbox=bbox,
                         center=center,
                     )
                     detections.append(det)
-        else:
-            # Fallback: use line-level results and split multi-char texts
-            for i, (text, score, box) in enumerate(
-                zip(result.txts, result.scores, result.boxes)
-            ):
-                text = text.strip()
-                if not text:
-                    continue
-
+            else:
+                # Fallback: use line-level box and split multi-char texts
                 xs = [p[0] * scale_x for p in box]
                 ys = [p[1] * scale_y for p in box]
 
