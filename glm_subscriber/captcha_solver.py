@@ -142,6 +142,24 @@ def _is_click_text_captcha(page: Page) -> bool:
     return False
 
 
+def _is_sliding_captcha(page: Page) -> bool:
+    """Detect if current CAPTCHA is sliding puzzle type (not click-text)."""
+    try:
+        # Sliding CAPTCHA has a slider block element
+        slider = page.locator(".tencent-captcha-dy__slider-block")
+        if slider.count() > 0:
+            return True
+        # Also check: CAPTCHA container visible but NO click-text elements
+        container = page.locator("#tcaptcha_transform_dy")
+        if container.count() > 0 and container.first.is_visible():
+            if not _is_click_text_captcha(page):
+                # Container visible but no click-text markers → likely sliding
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def extract_targets_from_dom(page: Page) -> List[str]:
     if not _is_click_text_captcha(page):
         logger.info("Current CAPTCHA is not click-text type, skipping")

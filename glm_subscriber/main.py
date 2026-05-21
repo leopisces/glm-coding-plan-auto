@@ -24,7 +24,7 @@ from glm_subscriber.browser import (
     wait_for_captcha_popup,
 )
 from glm_subscriber.captcha_capture import CaptchaCapture
-from glm_subscriber.captcha_solver import CaptchaSolver
+from glm_subscriber.captcha_solver import CaptchaSolver, _is_sliding_captcha
 from glm_subscriber.notify import send_notification
 from glm_subscriber.types import CaptchaConfig
 
@@ -560,6 +560,13 @@ def _worker(instance_id: str, args_ns) -> None:
                 )
             except Exception:
                 pass
+
+            # Detect sliding CAPTCHA and skip it
+            if _is_sliding_captcha(page):
+                logger.info("Detected sliding CAPTCHA, closing and retrying...")
+                _close_captcha_popup(page)
+                time.sleep(1)
+                continue
 
             result = solver.solve(page)
             stats["captcha_attempts"] += 1
